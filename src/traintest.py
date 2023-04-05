@@ -53,42 +53,33 @@ def train(audio_model, train_loader, test_loader, args):
     optimizer = torch.optim.Adam(trainables, args.lr, weight_decay=5e-7, betas=(0.95, 0.999))
 
     # dataset specific settings
-    main_metrics = args.metrics
-    if args.loss == 'BCE':
+    #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=args.lr_patience, verbose=True)
+    if args.dataset == 'audioset':
+        if len(train_loader.dataset) > 2e5:
+            print('scheduler for full audioset is used')
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [2,3,4,5], gamma=0.5, last_epoch=-1)
+        else:
+            print('scheduler for balanced audioset is used')
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [10, 15, 20, 25], gamma=0.5, last_epoch=-1)
+        main_metrics = 'mAP'
         loss_fn = nn.BCEWithLogitsLoss()
-    elif args.loss == 'CE':
+        warmup = True
+    elif args.dataset == 'esc50':
+        print('scheduler for esc-50 is used')
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, list(range(5,26)), gamma=0.85)
+        main_metrics = 'acc'
         loss_fn = nn.CrossEntropyLoss()
-    warmup = args.warmup
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, list(range(args.lrscheduler_start, 1000, args.lrscheduler_step)),gamma=args.lrscheduler_decay)
-    args.loss_fn = loss_fn
+        warmup = False
+    elif args.dataset == 'speechcommands':
+        print('scheduler for speech commands is used')
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, list(range(5,26)), gamma=0.85)
+        main_metrics = 'acc'
+        loss_fn = nn.BCEWithLogitsLoss()
+        warmup = False
+    else:
+        raise ValueError('unknown dataset, dataset should be in [audioset, speechcommands, esc50]')
     print('now training with {:s}, main metrics: {:s}, loss function: {:s}, learning rate scheduler: {:s}'.format(str(args.dataset), str(main_metrics), str(loss_fn), str(scheduler)))
-    print('The learning rate scheduler starts at {:d} epoch with decay rate of {:.3f} every {:d} epochs'.format(args.lrscheduler_start, args.lrscheduler_decay, args.lrscheduler_step))
-
-    # 11/30/22: I decouple the dataset and the following hyper-parameters to make it easier to adapt to new datasets
-    # if args.dataset == 'audioset':
-    #     if len(train_loader.dataset) > 2e5:
-    #         print('scheduler for full audioset is used')
-    #         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [2,3,4,5], gamma=0.5, last_epoch=-1)
-    #     else:
-    #         print('scheduler for balanced audioset is used')
-    #         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [10, 15, 20, 25], gamma=0.5, last_epoch=-1)
-    #     main_metrics = 'mAP'
-    #     loss_fn = nn.BCEWithLogitsLoss()
-    #     warmup = True
-    # elif args.dataset == 'esc50':
-    #     print('scheduler for esc-50 is used')
-    #     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, list(range(5,26)), gamma=0.85)
-    #     main_metrics = 'acc'
-    #     loss_fn = nn.CrossEntropyLoss()
-    #     warmup = False
-    # elif args.dataset == 'speechcommands':
-    #     print('scheduler for speech commands is used')
-    #     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, list(range(5,26)), gamma=0.85)
-    #     main_metrics = 'acc'
-    #     loss_fn = nn.BCEWithLogitsLoss()
-    #     warmup = False
-    # else:
-    #     raise ValueError('unknown dataset, dataset should be in [audioset, speechcommands, esc50]')
+    args.loss_fn = loss_fn
 
     epoch += 1
     # for amp
@@ -244,13 +235,11 @@ def train(audio_model, train_loader, test_loader, args):
         loss_meter.reset()
         per_sample_dnn_time.reset()
 
-    # if args.dataset == 'audioset':
-    #     if len(train_loader.dataset) > 2e5:
-    #         stats=validate_wa(audio_model, test_loader, args, 1, 5)
-    #     else:
-    #         stats=validate_wa(audio_model, test_loader, args, 6, 25)
-    if args.wa == True:
-        stats = validate_wa(audio_model, test_loader, args, args.wa_start, args.wa_end)
+    if args.dataset == 'audioset':
+        if len(train_loader.dataset) > 2e5:
+            stats=validate_wa(audio_model, test_loader, args, 1, 5)
+        else:
+            stats=validate_wa(audio_model, test_loader, args, 6, 25)
         mAP = np.mean([stat['AP'] for stat in stats])
         mAUC = np.mean([stat['auc'] for stat in stats])
         middle_ps = [stat['precisions'][int(len(stat['precisions'])/2)] for stat in stats]
